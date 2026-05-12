@@ -1,0 +1,119 @@
+# makale3 central configuration. Edit fields once the topic is locked.
+# All scripts under code/ read from this file via utils.cfg.load_config().
+
+project:
+  name: "makale3-cross-testbed-can-ids"
+  long_title: "Honest Cross-Testbed Evaluation of CAN-Bus Intrusion Detection: A Calibration-Aware Small-Data Benchmark Against the Inflated-F1 Critique"
+  paper_root: "D:/claude terminal/Projeler/makale3"
+  random_seed: 20260510
+
+# ---------------------------------------------------------------------------
+# Datasets — five-source canonical union (1 benchtop + 4 public reused).
+# Public sets live under makale1/2 raw dirs; no download required.
+# ---------------------------------------------------------------------------
+datasets:
+  bench:
+    path: "data/raw/can_data"
+    role: "primary"
+    description: "Arduino UNO + SeeedStudio CAN-BUS Shield V2 + Waveshare USB-CAN-B; 60k frames; baseline+DoS+idsweep+replay+spoofing"
+    citation: "this work"
+    notes_explain_txt_unreliable: true   # see plan/01_methodology.md §3
+
+  hcrl:
+    path: "../makale1/data/raw/hcrl"
+    role: "external_validation"
+    description: "HCRL Car-Hacking (Song et al. 2017): DoS/Fuzzy/Gear/RPM + normal_run"
+    parser: "parse_hcrl_csv"
+    citation: "Song2017"
+
+  road:
+    path: "../makale1/data/raw/road/road"
+    role: "external_validation"
+    description: "ROAD (Verma et al. PLoS One 2024): fabrication + masquerade, per-capture metadata"
+    parser: "parse_canutils_log"
+    citation: "Verma2024"
+
+  canmirgu:
+    path: "../makale2/data/raw/can-mirgu-full"
+    role: "external_validation"
+    description: "CAN-MIRGU (Rajapaksha et al. NDSS VehicleSec 2024): masquerade + replay + suspension"
+    parser: "parse_canutils_log"
+    citation: "Rajapaksha2024"
+
+  ctat:
+    path: "../makale2/data/raw/can-train-and-test/extracted"
+    role: "external_validation"
+    description: "can-train-and-test v1.5 (Lampe & Meng C&S 2024): 4 vehicles, 6 drivers, cross-vehicle eval"
+    parser: "parse_cttt_csv"
+    citation: "Lampe2024"
+
+# ---------------------------------------------------------------------------
+# IDS / ML — locked schema
+# ---------------------------------------------------------------------------
+ids:
+  window_seconds: 1.0
+  window_stride_seconds: 0.5
+  groupkfold_folds: 5
+  group_field: "capture_id"
+  metrics: ["roc_auc", "pr_auc", "ece", "f1_at_0p5"]
+  bootstrap_resamples: 1000
+  bootstrap_ci_percentile: 95
+  models:
+    - id: "lr"
+      kind: "logistic_regression"
+      params: {penalty: "elasticnet", solver: "saga", l1_ratio: 0.5, max_iter: 2000}
+    - id: "rf"
+      kind: "random_forest"
+      params: {n_estimators: 1000, class_weight: "balanced_subsample", n_jobs: -1}
+    - id: "xgb"
+      kind: "xgboost"
+      params: {tree_method: "hist", max_depth: 6, n_estimators: 800, learning_rate: 0.05}
+    - id: "cnn1d"
+      kind: "lightweight_1dcnn"
+      params: {channels: [32, 64, 128], kernel: 5, depthwise_separable: true}
+      compute: "colab_t4"
+  features:
+    counts: true
+    iat: true
+    id_stats: true
+    payload_entropy: true
+    asymmetry: true               # G5 — bench-only; NaN-routed elsewhere
+  cross_testbed_matrix: true     # train-on-A × test-on-B for all (A,B) pairs
+
+# ---------------------------------------------------------------------------
+# Statistical tests
+# ---------------------------------------------------------------------------
+statistics:
+  mcnemar: true
+  holm_bonferroni: true
+  significance_alpha: 0.05
+
+# ---------------------------------------------------------------------------
+# Output discipline — IEEE Conf A4 2-column standard (LOCKED across makale*)
+# ---------------------------------------------------------------------------
+outputs:
+  figures:
+    formats: ["pdf", "png"]
+    png_dpi: 600
+    matplotlib_rc:
+      font_family: "serif"
+      font_size: 10
+      pdf_fonttype: 42                          # editable PDF (type-1 emulation)
+      ps_fonttype: 42
+      savefig_bbox: "tight"
+  tables:
+    formats: ["csv", "tex"]
+    style: "borderless_modern_ieee"             # three horizontal rules, no verticals
+  manuscript:
+    template: "templates/conference-template-a4.fixed.docx"   # 2-COLUMN IEEE Conf A4
+    output: "outputs/manuscript/paper_a4_2col.docx"
+  results_dir: "outputs/results"
+  checkpoint_file: "outputs/results/checkpoint.json"
+
+# ---------------------------------------------------------------------------
+# Compute placement (locked from makale1+2)
+# ---------------------------------------------------------------------------
+compute:
+  laptop_max_continuous_hours: 3                # CLAUDE.md rule
+  long_jobs_to_colab: []                        # fill if GPU work needed
+  colab_runtime_preferred: "T4 GPU"

@@ -1,0 +1,7 @@
+# Streamlit Cloud — minimal deps for the makale3 live demo.
+streamlit>=1.36
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15
+scikit-learn>=1.5
+plotly>=5.20

@@ -136,79 +136,198 @@ def _car_x_from_speed(speed_kmh: float) -> float:
     return 7.0 + (min(max(speed_kmh, 0.0), 200.0) / 200.0) * 86.0
 
 
-def _static_road_shapes() -> list[dict]:
-    """Minimal academic road strip: thin dark band with dashed centre line."""
+def _road_shapes(t_us: float) -> list[dict]:
+    """Road body + dashed lane markings that flow leftward with time, so the
+    car reads as moving forward even when its position is stable."""
     shapes = [
         dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.00, x1=100, y1=0.12,
              line=dict(width=0), fillcolor="#2a2c30"),
     ]
-    for i in range(0, 100, 7):
+    flow_units_per_s = 12.0
+    offset = -(t_us / 1e6 * flow_units_per_s) % 7.0
+    for i in range(-1, 16):
+        x0 = i * 7 + offset
         shapes.append(dict(type="rect", xref="x2", yref="y2",
-                           x0=i + 1.5, y0=0.054, x1=i + 4.5, y1=0.068,
+                           x0=x0 + 1.5, y0=0.054, x1=x0 + 4.5, y1=0.068,
                            line=dict(width=0), fillcolor="#e9ebef"))
     return shapes
 
 
 # Car palette tuned for a paper-figure aesthetic: monochrome silhouette,
-# attack state is signalled by a stroked outline (not a fill flip), so the
-# vehicle silhouette stays calm and reads as a technical illustration.
-_CAR_BODY_FILL    = "#dee2e8"
-_CAR_BODY_LINE    = "#3c4148"
-_CAR_WINDOW_FILL  = "#b6bec8"
-_CAR_WHEEL_FILL   = "#1c1f23"
-_CAR_HUB_FILL     = "#6b7079"
-_CAR_HEADLIGHT    = "#f3d792"
+# attack state is signalled by a stroked outline + soft halo, not a fill flip.
+_CAR_BODY_FILL    = "#dde1e8"
+_CAR_BODY_LINE    = "#2f343b"
+_CAR_WINDOW_FILL  = "#a9b2bd"
+_CAR_WINDOW_LINE  = "#5e656e"
+_CAR_WHEEL_FILL   = "#15171a"
+_CAR_HUB_FILL     = "#6e7480"
+_CAR_HEADLIGHT    = "#f5cb78"
+_CAR_TAILLIGHT    = "#c95a5a"
+
+
+def _car_silhouette_path(cx: float) -> str:
+    """Modern sedan side view centred at cx; spans x in [cx-7, cx+7]."""
+    return (
+        f"M {cx-7.0:.3f} 0.18 "
+        f"L {cx-7.0:.3f} 0.22 "
+        f"C {cx-7.0:.3f} 0.29 {cx-6.5:.3f} 0.30 {cx-5.6:.3f} 0.30 "  # front curve over hood
+        f"L {cx-3.3:.3f} 0.30 "                                       # hood line
+        f"C {cx-2.7:.3f} 0.30 {cx-2.3:.3f} 0.34 {cx-1.5:.3f} 0.41 "   # windshield rake
+        f"L {cx+1.4:.3f} 0.41 "                                       # roof
+        f"C {cx+2.2:.3f} 0.41 {cx+2.6:.3f} 0.36 {cx+3.4:.3f} 0.30 "   # rear-window rake
+        f"L {cx+5.5:.3f} 0.30 "                                       # trunk
+        f"C {cx+6.6:.3f} 0.30 {cx+7.0:.3f} 0.29 {cx+7.0:.3f} 0.22 "   # rear curve
+        f"L {cx+7.0:.3f} 0.18 "
+        f"Z"
+    )
+
+
+def _car_window_path(cx: float) -> str:
+    """Window glass — single trapezoid inside the roof outline."""
+    return (
+        f"M {cx-2.7:.3f} 0.305 "
+        f"L {cx-1.5:.3f} 0.398 "
+        f"L {cx+1.3:.3f} 0.398 "
+        f"L {cx+2.7:.3f} 0.305 "
+        f"Z"
+    )
 
 
 def _car_shapes(state: dict) -> list[dict]:
     cx = _car_x_from_speed(state[0x100] or 0.0)
     attack = state["attack_active"]
     border_color = ACCENT if attack else _CAR_BODY_LINE
-    border_width = 2.2 if attack else 1.2
+    border_width = 2.0 if attack else 1.2
 
     sh: list[dict] = []
-    # Attack halo — invisible when benign, soft red rectangle when an attack
-    # window is active. Drawn first so it sits behind the silhouette.
+    # Soft halo when attack is active — drawn first so it sits behind the car.
     if attack:
         sh.append(dict(type="rect", xref="x2", yref="y2",
-                       x0=cx - 6.2, y0=0.13, x1=cx + 6.2, y1=0.50,
+                       x0=cx - 8.2, y0=0.10, x1=cx + 8.2, y1=0.50,
                        line=dict(color=ACCENT, width=1.0, dash="dot"),
-                       fillcolor="rgba(204,102,119,0.07)"))
+                       fillcolor="rgba(204,102,119,0.06)"))
 
-    # Wheels (small, sitting on the road)
-    for wx in (cx - 2.6, cx + 2.6):
+    # Body silhouette (smooth sedan profile)
+    sh.append(dict(type="path", xref="x2", yref="y2",
+                   path=_car_silhouette_path(cx),
+                   line=dict(color=border_color, width=border_width),
+                   fillcolor=_CAR_BODY_FILL))
+    # Beltline accent — thin horizontal stroke under the windows
+    sh.append(dict(type="line", xref="x2", yref="y2",
+                   x0=cx - 5.6, y0=0.302, x1=cx + 5.5, y1=0.302,
+                   line=dict(color="#7d8590", width=0.8)))
+    # Window glass
+    sh.append(dict(type="path", xref="x2", yref="y2",
+                   path=_car_window_path(cx),
+                   line=dict(color=_CAR_WINDOW_LINE, width=0.6),
+                   fillcolor=_CAR_WINDOW_FILL))
+    # B-pillar — slim divider between front and rear side window
+    sh.append(dict(type="line", xref="x2", yref="y2",
+                   x0=cx - 0.05, y0=0.310, x1=cx - 0.05, y1=0.395,
+                   line=dict(color=_CAR_WINDOW_LINE, width=0.8)))
+    # Door cut line
+    sh.append(dict(type="line", xref="x2", yref="y2",
+                   x0=cx - 0.1, y0=0.30, x1=cx - 0.1, y1=0.20,
+                   line=dict(color="#7d8590", width=0.5)))
+    # Side mirror (tiny stub on the A-pillar area)
+    sh.append(dict(type="rect", xref="x2", yref="y2",
+                   x0=cx - 2.55, y0=0.318, x1=cx - 2.05, y1=0.336,
+                   line=dict(color=_CAR_BODY_LINE, width=0.5),
+                   fillcolor=_CAR_BODY_FILL))
+
+    # Wheels — drawn last so they sit on top of the body baseline.
+    for wx in (cx - 4.0, cx + 4.0):
         sh.append(dict(type="circle", xref="x2", yref="y2",
-                       x0=wx - 0.85, y0=0.115, x1=wx + 0.85, y1=0.21,
-                       line=dict(color="#15171a", width=1.0),
+                       x0=wx - 1.0, y0=0.115, x1=wx + 1.0, y1=0.21,
+                       line=dict(color="#0a0b0d", width=1.0),
                        fillcolor=_CAR_WHEEL_FILL))
         sh.append(dict(type="circle", xref="x2", yref="y2",
-                       x0=wx - 0.32, y0=0.148, x1=wx + 0.32, y1=0.182,
+                       x0=wx - 0.42, y0=0.146, x1=wx + 0.42, y1=0.180,
                        line=dict(width=0), fillcolor=_CAR_HUB_FILL))
-    # Lower body
+        sh.append(dict(type="circle", xref="x2", yref="y2",
+                       x0=wx - 0.10, y0=0.158, x1=wx + 0.10, y1=0.168,
+                       line=dict(width=0), fillcolor="#1c1f23"))
+    # Headlight (front) + taillight (rear)
     sh.append(dict(type="rect", xref="x2", yref="y2",
-                   x0=cx - 4.2, y0=0.18, x1=cx + 4.2, y1=0.30,
-                   line=dict(color=border_color, width=border_width),
-                   fillcolor=_CAR_BODY_FILL))
-    # Roof (trapezoid)
-    sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 2.7:.3f} 0.30 "
-                         f"L {cx + 2.4:.3f} 0.30 "
-                         f"L {cx + 1.6:.3f} 0.40 "
-                         f"L {cx - 2.0:.3f} 0.40 Z"),
-                   line=dict(color=border_color, width=border_width),
-                   fillcolor=_CAR_BODY_FILL))
-    # Window (inset)
-    sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 2.3:.3f} 0.305 "
-                         f"L {cx + 2.0:.3f} 0.305 "
-                         f"L {cx + 1.35:.3f} 0.39 "
-                         f"L {cx - 1.7:.3f} 0.39 Z"),
-                   line=dict(width=0), fillcolor=_CAR_WINDOW_FILL))
-    # Small headlight (subtle amber dot)
-    sh.append(dict(type="circle", xref="x2", yref="y2",
-                   x0=cx + 3.8, y0=0.22, x1=cx + 4.2, y1=0.26,
+                   x0=cx + 6.3, y0=0.235, x1=cx + 6.9, y1=0.262,
                    line=dict(width=0), fillcolor=_CAR_HEADLIGHT))
+    sh.append(dict(type="rect", xref="x2", yref="y2",
+                   x0=cx - 6.9, y0=0.235, x1=cx - 6.3, y1=0.262,
+                   line=dict(width=0), fillcolor=_CAR_TAILLIGHT))
     return sh
+
+
+def _attack_overlay(state: dict, attack_type: str) -> tuple[list[dict], list[dict]]:
+    """Attack-specific visual layer (shapes, annotations). Empty when benign."""
+    if not state["attack_active"] or attack_type == "benign":
+        return [], []
+    cx = _car_x_from_speed(state[0x100] or 0.0)
+    shapes: list[dict] = []
+    anns: list[dict] = []
+
+    if attack_type == "dos":
+        # Cascade of small downward triangles above the car: bus saturation.
+        for i in range(7):
+            ax = cx - 7 + i * 2.2
+            ay_top = 0.62 + ((i % 2) * 0.06)
+            shapes.append(dict(type="path", xref="x2", yref="y2",
+                               path=(f"M {ax-0.45:.3f} {ay_top+0.08:.3f} "
+                                     f"L {ax+0.45:.3f} {ay_top+0.08:.3f} "
+                                     f"L {ax:.3f} {ay_top:.3f} Z"),
+                               line=dict(width=0), fillcolor=ACCENT))
+        anns.append(dict(text="DoS — flood at 0x000, RX buffer overrun",
+                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          xanchor="center",
+                          font=dict(color=ACCENT, size=11, family="serif")))
+
+    elif attack_type == "replay":
+        # Faded ghost silhouette behind the car: re-injected past frames.
+        ghost_cx = max(8.0, cx - 12.0)
+        shapes.append(dict(type="path", xref="x2", yref="y2",
+                           path=_car_silhouette_path(ghost_cx),
+                           line=dict(color=ACCENT, width=0.8, dash="dot"),
+                           fillcolor="rgba(204,102,119,0.10)"))
+        # Curved arrow from ghost to live car
+        shapes.append(dict(type="path", xref="x2", yref="y2",
+                           path=(f"M {ghost_cx+1.0:.3f} 0.45 "
+                                 f"Q {(ghost_cx+cx)/2:.3f} 0.55 "
+                                 f"{cx-1.5:.3f} 0.45"),
+                           line=dict(color=ACCENT, width=1.2),
+                           fillcolor="rgba(0,0,0,0)"))
+        anns.append(dict(text="Replay — past frames re-injected onto the bus",
+                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          xanchor="center",
+                          font=dict(color=ACCENT, size=11, family="serif")))
+
+    elif attack_type == "spoofing":
+        # Lightning glyph above the car: false payload on a legitimate ID.
+        shapes.append(dict(type="path", xref="x2", yref="y2",
+                           path=(f"M {cx-0.6:.3f} 0.72 "
+                                 f"L {cx+0.3:.3f} 0.60 "
+                                 f"L {cx-0.1:.3f} 0.58 "
+                                 f"L {cx+0.7:.3f} 0.48 "
+                                 f"L {cx-0.05:.3f} 0.52 "
+                                 f"L {cx+0.35:.3f} 0.54 Z"),
+                           line=dict(color=ACCENT, width=0.8),
+                           fillcolor=ACCENT))
+        anns.append(dict(text="Spoofing — false payload on a legitimate ID",
+                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          xanchor="center",
+                          font=dict(color=ACCENT, size=11, family="serif")))
+
+    elif attack_type == "idsweep":
+        # Scan bar across the top: enumeration of CAN IDs.
+        for i in range(12):
+            ax = 6 + i * 7.5
+            shapes.append(dict(type="rect", xref="x2", yref="y2",
+                               x0=ax, y0=0.66, x1=ax + 4, y1=0.69,
+                               line=dict(width=0), fillcolor=ACCENT))
+        anns.append(dict(text="ID-sweep — attacker enumerates CAN IDs",
+                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          xanchor="center",
+                          font=dict(color=ACCENT, size=11, family="serif")))
+
+    return shapes, anns
 
 
 def _cockpit_annotations(state: dict, t_s: float) -> list[dict]:
@@ -236,8 +355,11 @@ def _cockpit_annotations(state: dict, t_s: float) -> list[dict]:
     return anns
 
 
-def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame) -> go.Figure:
-    """One animated figure: gauges in the top row, a vector car on the bottom road."""
+def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame,
+                        attack_type: str) -> go.Figure:
+    """One animated figure: gauges in the top row, a vector car on the bottom road.
+    `attack_type` drives the attack-specific overlay (DoS triangles, replay ghost, etc.).
+    """
     t_max_us = int(df["t_us"].max())
     step_us = 300_000        # 0.3 s sampling -> ~100 frames for a 30 s capture
     samples_us = list(range(0, t_max_us + 1, step_us))
@@ -245,6 +367,7 @@ def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame) -> go.Figure:
         samples_us.append(t_max_us)
     states = [_decode_state(df, wf, t) for t in samples_us]
     state0 = states[0]
+    ov_shapes0, ov_anns0 = _attack_overlay(state0, attack_type)
 
     fig = make_subplots(
         rows=2, cols=4,
@@ -269,12 +392,13 @@ def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(range=[0, 1], visible=False, fixedrange=True, row=2, col=1)
 
     fig.update_layout(
-        shapes=_static_road_shapes() + _car_shapes(state0),
-        annotations=_cockpit_annotations(state0, samples_us[0] / 1e6),
+        shapes=_road_shapes(samples_us[0]) + ov_shapes0 + _car_shapes(state0),
+        annotations=_cockpit_annotations(state0, samples_us[0] / 1e6) + ov_anns0,
     )
 
     frames = []
     for t_us, state in zip(samples_us, states):
+        ov_shapes, ov_anns = _attack_overlay(state, attack_type)
         frames.append(go.Frame(
             data=[
                 go.Indicator(value=state[0x100] or 0),
@@ -284,8 +408,8 @@ def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame) -> go.Figure:
                 go.Scatter(x=[0, 100], y=[0, 1]),
             ],
             layout=dict(
-                shapes=_static_road_shapes() + _car_shapes(state),
-                annotations=_cockpit_annotations(state, t_us / 1e6),
+                shapes=_road_shapes(t_us) + ov_shapes + _car_shapes(state),
+                annotations=(_cockpit_annotations(state, t_us / 1e6) + ov_anns),
             ),
             name=f"{t_us / 1e6:.1f}",
         ))
@@ -515,7 +639,7 @@ tab_cockpit, tab1, tab2, tab3, tab4 = st.tabs([
 WINDOW_US = 1_000_000
 
 with tab_cockpit:
-    cockpit_fig = _build_cockpit_fig(df, wf)
+    cockpit_fig = _build_cockpit_fig(df, wf, spec.attack_type)
     st.plotly_chart(cockpit_fig, use_container_width=True)
 
     # Static snapshot of the boolean ECU flags, taken at the attack-window

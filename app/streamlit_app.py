@@ -137,53 +137,77 @@ def _car_x_from_speed(speed_kmh: float) -> float:
 
 
 def _static_road_shapes() -> list[dict]:
+    """Minimal academic road strip: thin dark band with dashed centre line."""
     shapes = [
-        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.75, x1=100, y1=1.00,
-             line=dict(width=0), fillcolor="#f6f8fb"),
-        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.00, x1=100, y1=0.18,
-             line=dict(width=0), fillcolor="#2f2f33"),
+        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.00, x1=100, y1=0.12,
+             line=dict(width=0), fillcolor="#2a2c30"),
     ]
-    for i in range(0, 100, 8):
+    for i in range(0, 100, 7):
         shapes.append(dict(type="rect", xref="x2", yref="y2",
-                           x0=i + 1, y0=0.085, x1=i + 5, y1=0.105,
-                           line=dict(width=0), fillcolor="#f4f4f4"))
+                           x0=i + 1.5, y0=0.054, x1=i + 4.5, y1=0.068,
+                           line=dict(width=0), fillcolor="#e9ebef"))
     return shapes
+
+
+# Car palette tuned for a paper-figure aesthetic: monochrome silhouette,
+# attack state is signalled by a stroked outline (not a fill flip), so the
+# vehicle silhouette stays calm and reads as a technical illustration.
+_CAR_BODY_FILL    = "#dee2e8"
+_CAR_BODY_LINE    = "#3c4148"
+_CAR_WINDOW_FILL  = "#b6bec8"
+_CAR_WHEEL_FILL   = "#1c1f23"
+_CAR_HUB_FILL     = "#6b7079"
+_CAR_HEADLIGHT    = "#f3d792"
 
 
 def _car_shapes(state: dict) -> list[dict]:
     cx = _car_x_from_speed(state[0x100] or 0.0)
     attack = state["attack_active"]
-    body_color   = ACCENT if attack else "#4477aa"
-    window_color = "#fde7e9" if attack else "#bcd8ee"
+    border_color = ACCENT if attack else _CAR_BODY_LINE
+    border_width = 2.2 if attack else 1.2
+
     sh: list[dict] = []
-    for wx in (cx - 3.2, cx + 3.2):
+    # Attack halo — invisible when benign, soft red rectangle when an attack
+    # window is active. Drawn first so it sits behind the silhouette.
+    if attack:
+        sh.append(dict(type="rect", xref="x2", yref="y2",
+                       x0=cx - 6.2, y0=0.13, x1=cx + 6.2, y1=0.50,
+                       line=dict(color=ACCENT, width=1.0, dash="dot"),
+                       fillcolor="rgba(204,102,119,0.07)"))
+
+    # Wheels (small, sitting on the road)
+    for wx in (cx - 2.6, cx + 2.6):
         sh.append(dict(type="circle", xref="x2", yref="y2",
-                       x0=wx - 1.1, y0=0.17, x1=wx + 1.1, y1=0.36,
-                       line=dict(color="#0f0f0f", width=1.4),
-                       fillcolor="#1a1a1a"))
+                       x0=wx - 0.85, y0=0.115, x1=wx + 0.85, y1=0.21,
+                       line=dict(color="#15171a", width=1.0),
+                       fillcolor=_CAR_WHEEL_FILL))
         sh.append(dict(type="circle", xref="x2", yref="y2",
-                       x0=wx - 0.45, y0=0.235, x1=wx + 0.45, y1=0.305,
-                       line=dict(width=0), fillcolor="#8a8a8a"))
+                       x0=wx - 0.32, y0=0.148, x1=wx + 0.32, y1=0.182,
+                       line=dict(width=0), fillcolor=_CAR_HUB_FILL))
+    # Lower body
     sh.append(dict(type="rect", xref="x2", yref="y2",
-                   x0=cx - 6.0, y0=0.27, x1=cx + 6.0, y1=0.55,
-                   line=dict(color="#0f0f0f", width=1.4),
-                   fillcolor=body_color))
+                   x0=cx - 4.2, y0=0.18, x1=cx + 4.2, y1=0.30,
+                   line=dict(color=border_color, width=border_width),
+                   fillcolor=_CAR_BODY_FILL))
+    # Roof (trapezoid)
     sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 3.8:.3f} 0.55 "
-                         f"L {cx + 3.3:.3f} 0.55 "
-                         f"L {cx + 2.3:.3f} 0.74 "
-                         f"L {cx - 2.8:.3f} 0.74 Z"),
-                   line=dict(color="#0f0f0f", width=1.4),
-                   fillcolor=body_color))
+                   path=(f"M {cx - 2.7:.3f} 0.30 "
+                         f"L {cx + 2.4:.3f} 0.30 "
+                         f"L {cx + 1.6:.3f} 0.40 "
+                         f"L {cx - 2.0:.3f} 0.40 Z"),
+                   line=dict(color=border_color, width=border_width),
+                   fillcolor=_CAR_BODY_FILL))
+    # Window (inset)
     sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 3.3:.3f} 0.555 "
-                         f"L {cx + 2.8:.3f} 0.555 "
-                         f"L {cx + 2.0:.3f} 0.715 "
-                         f"L {cx - 2.5:.3f} 0.715 Z"),
-                   line=dict(width=0), fillcolor=window_color))
+                   path=(f"M {cx - 2.3:.3f} 0.305 "
+                         f"L {cx + 2.0:.3f} 0.305 "
+                         f"L {cx + 1.35:.3f} 0.39 "
+                         f"L {cx - 1.7:.3f} 0.39 Z"),
+                   line=dict(width=0), fillcolor=_CAR_WINDOW_FILL))
+    # Small headlight (subtle amber dot)
     sh.append(dict(type="circle", xref="x2", yref="y2",
-                   x0=cx + 5.5, y0=0.34, x1=cx + 6.3, y1=0.42,
-                   line=dict(width=0), fillcolor="#ffd57a"))
+                   x0=cx + 3.8, y0=0.22, x1=cx + 4.2, y1=0.26,
+                   line=dict(width=0), fillcolor=_CAR_HEADLIGHT))
     return sh
 
 
@@ -191,22 +215,24 @@ def _cockpit_annotations(state: dict, t_s: float) -> list[dict]:
     cx = _car_x_from_speed(state[0x100] or 0.0)
     speed = state[0x100] or 0
     anns: list[dict] = []
-    anns.append(dict(text=f"{int(speed)} km/h", x=cx, y=0.88,
+    # Small speed label tucked above the car silhouette.
+    anns.append(dict(text=f"{int(speed)} km/h", x=cx, y=0.46,
                      xref="x2", yref="y2", showarrow=False,
-                     font=dict(color=PRIMARY, size=13, family="serif")))
-    anns.append(dict(text=f"t = {t_s:.1f} s", x=3, y=0.93,
+                     font=dict(color=PRIMARY, size=12, family="serif")))
+    # Status strip across the top of the road subplot.
+    anns.append(dict(text=f"t = {t_s:.1f} s", x=2, y=0.93,
                      xref="x2", yref="y2", showarrow=False, xanchor="left",
-                     font=dict(color="#444", size=11, family="serif")))
+                     font=dict(color="#555", size=11, family="serif")))
     pred = state.get("pred_prob")
     if pred is not None:
         anns.append(dict(text=f"detector P(attack) = {pred:.3f}",
                          x=50, y=0.93, xref="x2", yref="y2", showarrow=False,
                          xanchor="center",
-                         font=dict(color="#444", size=11, family="serif")))
+                         font=dict(color="#555", size=11, family="serif")))
     if state["attack_active"]:
-        anns.append(dict(text="● ATTACK ACTIVE", x=97, y=0.93,
+        anns.append(dict(text="● ATTACK ACTIVE", x=98, y=0.93,
                          xref="x2", yref="y2", showarrow=False, xanchor="right",
-                         font=dict(color=ACCENT, size=12, family="serif")))
+                         font=dict(color=ACCENT, size=11, family="serif")))
     return anns
 
 
@@ -224,8 +250,8 @@ def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame) -> go.Figure:
         rows=2, cols=4,
         specs=[[{"type": "indicator"}] * 4,
                [{"type": "scatter", "colspan": 4}, None, None, None]],
-        row_heights=[0.42, 0.58],
-        vertical_spacing=0.04,
+        row_heights=[0.55, 0.45],
+        vertical_spacing=0.06,
     )
     fig.add_trace(_gauge_trace(state0[0x100], "Speed (km/h)", 0, 200, PRIMARY),
                   row=1, col=1)

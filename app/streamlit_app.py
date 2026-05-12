@@ -172,8 +172,7 @@ if not generate and "current_df" not in st.session_state:
     st.info(
         "Use the dials on the left, then press **Generate trace** to "
         "synthesise a CAN-bus capture and feed it through a reference "
-        "intrusion detector.",
-        icon="►",
+        "intrusion detector."
     )
     st.stop()
 

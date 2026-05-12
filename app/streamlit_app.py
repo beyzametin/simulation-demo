@@ -123,6 +123,185 @@ def _gauge_trace(value, label, vmin, vmax, color):
         ),
     )
 
+
+# --------------------------------------------------------------------------
+# Cockpit figure — auto-playing Plotly animation that drives gauges + a
+# vector car along the defender's bus timeline. Each animation frame is a
+# real-state sample at 0.3 s resolution, so playback is a faithful replay
+# of the capture; the bar colour and ATTACK marker turn on when the live
+# attack flag is set, without touching any underlying value.
+# --------------------------------------------------------------------------
+
+def _car_x_from_speed(speed_kmh: float) -> float:
+    return 7.0 + (min(max(speed_kmh, 0.0), 200.0) / 200.0) * 86.0
+
+
+def _static_road_shapes() -> list[dict]:
+    shapes = [
+        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.75, x1=100, y1=1.00,
+             line=dict(width=0), fillcolor="#f6f8fb"),
+        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.00, x1=100, y1=0.18,
+             line=dict(width=0), fillcolor="#2f2f33"),
+    ]
+    for i in range(0, 100, 8):
+        shapes.append(dict(type="rect", xref="x2", yref="y2",
+                           x0=i + 1, y0=0.085, x1=i + 5, y1=0.105,
+                           line=dict(width=0), fillcolor="#f4f4f4"))
+    return shapes
+
+
+def _car_shapes(state: dict) -> list[dict]:
+    cx = _car_x_from_speed(state[0x100] or 0.0)
+    attack = state["attack_active"]
+    body_color   = ACCENT if attack else "#4477aa"
+    window_color = "#fde7e9" if attack else "#bcd8ee"
+    sh: list[dict] = []
+    for wx in (cx - 3.2, cx + 3.2):
+        sh.append(dict(type="circle", xref="x2", yref="y2",
+                       x0=wx - 1.1, y0=0.17, x1=wx + 1.1, y1=0.36,
+                       line=dict(color="#0f0f0f", width=1.4),
+                       fillcolor="#1a1a1a"))
+        sh.append(dict(type="circle", xref="x2", yref="y2",
+                       x0=wx - 0.45, y0=0.235, x1=wx + 0.45, y1=0.305,
+                       line=dict(width=0), fillcolor="#8a8a8a"))
+    sh.append(dict(type="rect", xref="x2", yref="y2",
+                   x0=cx - 6.0, y0=0.27, x1=cx + 6.0, y1=0.55,
+                   line=dict(color="#0f0f0f", width=1.4),
+                   fillcolor=body_color))
+    sh.append(dict(type="path", xref="x2", yref="y2",
+                   path=(f"M {cx - 3.8:.3f} 0.55 "
+                         f"L {cx + 3.3:.3f} 0.55 "
+                         f"L {cx + 2.3:.3f} 0.74 "
+                         f"L {cx - 2.8:.3f} 0.74 Z"),
+                   line=dict(color="#0f0f0f", width=1.4),
+                   fillcolor=body_color))
+    sh.append(dict(type="path", xref="x2", yref="y2",
+                   path=(f"M {cx - 3.3:.3f} 0.555 "
+                         f"L {cx + 2.8:.3f} 0.555 "
+                         f"L {cx + 2.0:.3f} 0.715 "
+                         f"L {cx - 2.5:.3f} 0.715 Z"),
+                   line=dict(width=0), fillcolor=window_color))
+    sh.append(dict(type="circle", xref="x2", yref="y2",
+                   x0=cx + 5.5, y0=0.34, x1=cx + 6.3, y1=0.42,
+                   line=dict(width=0), fillcolor="#ffd57a"))
+    return sh
+
+
+def _cockpit_annotations(state: dict, t_s: float) -> list[dict]:
+    cx = _car_x_from_speed(state[0x100] or 0.0)
+    speed = state[0x100] or 0
+    anns: list[dict] = []
+    anns.append(dict(text=f"{int(speed)} km/h", x=cx, y=0.88,
+                     xref="x2", yref="y2", showarrow=False,
+                     font=dict(color=PRIMARY, size=13, family="serif")))
+    anns.append(dict(text=f"t = {t_s:.1f} s", x=3, y=0.93,
+                     xref="x2", yref="y2", showarrow=False, xanchor="left",
+                     font=dict(color="#444", size=11, family="serif")))
+    pred = state.get("pred_prob")
+    if pred is not None:
+        anns.append(dict(text=f"detector P(attack) = {pred:.3f}",
+                         x=50, y=0.93, xref="x2", yref="y2", showarrow=False,
+                         xanchor="center",
+                         font=dict(color="#444", size=11, family="serif")))
+    if state["attack_active"]:
+        anns.append(dict(text="● ATTACK ACTIVE", x=97, y=0.93,
+                         xref="x2", yref="y2", showarrow=False, xanchor="right",
+                         font=dict(color=ACCENT, size=12, family="serif")))
+    return anns
+
+
+def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame) -> go.Figure:
+    """One animated figure: gauges in the top row, a vector car on the bottom road."""
+    t_max_us = int(df["t_us"].max())
+    step_us = 300_000        # 0.3 s sampling -> ~100 frames for a 30 s capture
+    samples_us = list(range(0, t_max_us + 1, step_us))
+    if samples_us[-1] != t_max_us:
+        samples_us.append(t_max_us)
+    states = [_decode_state(df, wf, t) for t in samples_us]
+    state0 = states[0]
+
+    fig = make_subplots(
+        rows=2, cols=4,
+        specs=[[{"type": "indicator"}] * 4,
+               [{"type": "scatter", "colspan": 4}, None, None, None]],
+        row_heights=[0.42, 0.58],
+        vertical_spacing=0.04,
+    )
+    fig.add_trace(_gauge_trace(state0[0x100], "Speed (km/h)", 0, 200, PRIMARY),
+                  row=1, col=1)
+    fig.add_trace(_gauge_trace(state0[0x110], "RPM",          0, 8000, PRIMARY),
+                  row=1, col=2)
+    fig.add_trace(_gauge_trace(state0[0x140], "Throttle (%)", 0, 100, PRIMARY),
+                  row=1, col=3)
+    fig.add_trace(_gauge_trace(state0["bus_rate_hz"], "Bus rate (Hz)",
+                                0, 5000, PRIMARY), row=1, col=4)
+    # Anchor scatter for the road subplot (markers invisible)
+    fig.add_trace(go.Scatter(x=[0, 100], y=[0, 1], mode="markers",
+                              marker=dict(opacity=0), showlegend=False,
+                              hoverinfo="skip"), row=2, col=1)
+    fig.update_xaxes(range=[0, 100], visible=False, fixedrange=True, row=2, col=1)
+    fig.update_yaxes(range=[0, 1], visible=False, fixedrange=True, row=2, col=1)
+
+    fig.update_layout(
+        shapes=_static_road_shapes() + _car_shapes(state0),
+        annotations=_cockpit_annotations(state0, samples_us[0] / 1e6),
+    )
+
+    frames = []
+    for t_us, state in zip(samples_us, states):
+        frames.append(go.Frame(
+            data=[
+                go.Indicator(value=state[0x100] or 0),
+                go.Indicator(value=state[0x110] or 0),
+                go.Indicator(value=state[0x140] or 0),
+                go.Indicator(value=state["bus_rate_hz"]),
+                go.Scatter(x=[0, 100], y=[0, 1]),
+            ],
+            layout=dict(
+                shapes=_static_road_shapes() + _car_shapes(state),
+                annotations=_cockpit_annotations(state, t_us / 1e6),
+            ),
+            name=f"{t_us / 1e6:.1f}",
+        ))
+    fig.frames = frames
+
+    play_args  = [None, dict(frame=dict(duration=220, redraw=True),
+                              transition=dict(duration=70),
+                              fromcurrent=True, mode="immediate")]
+    pause_args = [[None], dict(frame=dict(duration=0, redraw=False),
+                                mode="immediate",
+                                transition=dict(duration=0))]
+    fig.update_layout(
+        height=560,
+        margin=dict(l=20, r=20, t=10, b=80),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        updatemenus=[dict(
+            type="buttons", direction="left", showactive=False,
+            x=0.0, y=-0.07, xanchor="left", yanchor="top",
+            pad=dict(t=4, r=10),
+            buttons=[
+                dict(label="Play",  method="animate", args=play_args),
+                dict(label="Pause", method="animate", args=pause_args),
+            ],
+        )],
+        sliders=[dict(
+            active=0, x=0.12, y=-0.04, len=0.85,
+            currentvalue=dict(prefix="t = ", suffix=" s",
+                              visible=True, font=dict(size=11, color="#444")),
+            transition=dict(duration=0),
+            pad=dict(t=4, b=4),
+            steps=[dict(method="animate",
+                        args=[[f"{t / 1e6:.1f}"],
+                              dict(mode="immediate",
+                                   frame=dict(duration=0, redraw=True),
+                                   transition=dict(duration=0))],
+                        label=f"{t / 1e6:.1f}")
+                   for t in samples_us],
+        )],
+    )
+    return fig
+
 st.markdown(
     """
     <style>
@@ -310,149 +489,36 @@ tab_cockpit, tab1, tab2, tab3, tab4 = st.tabs([
 WINDOW_US = 1_000_000
 
 with tab_cockpit:
-    t_max_s = float(df["t_us"].max() / 1e6)
-    default_t = round(min(t_max_s, max(0.0, spec.pre_s + spec.attack_s / 2)), 1)
-    t_sel_s = st.slider(
-        "Scrub through the capture (seconds)",
-        min_value=0.0, max_value=t_max_s,
-        value=default_t, step=0.1,
-        help="Drag to see how the gauges, status lights, and the detector's "
-             "verdict evolve over the bus timeline.",
-    )
-    t_sel_us = int(t_sel_s * 1_000_000)
-    state = _decode_state(df, wf, t_sel_us)
+    cockpit_fig = _build_cockpit_fig(df, wf)
+    st.plotly_chart(cockpit_fig, use_container_width=True)
 
-    # Status banner — defender's view of what is happening right now.
-    pred = state["pred_prob"]
-    pred_txt = f"P(attack) = {pred:.3f}" if pred is not None else "P(attack) = n/a"
-    if state["attack_active"]:
-        banner_bg, banner_fg = ACCENT, "white"
-        banner_text = (f"Attack window active "
-                       f"(true label = {state['true_label']}) — "
-                       f"detector reports {pred_txt}")
-    else:
-        banner_bg, banner_fg = PRIMARY, "white"
-        banner_text = f"Benign — detector reports {pred_txt}"
-    st.markdown(
-        f"<div style='background:{banner_bg};color:{banner_fg};"
-        f"padding:0.55rem 1rem;border-radius:8px;font-weight:500;"
-        f"margin-bottom:1rem;'>{banner_text}</div>",
-        unsafe_allow_html=True,
-    )
-
-    # Three primary gauges (Speed, RPM, Throttle) plus a bus-utilisation meter.
-    gauge_color = ACCENT if state["attack_active"] else PRIMARY
-    fig = make_subplots(
-        rows=1, cols=4,
-        specs=[[{"type": "indicator"}] * 4],
-        horizontal_spacing=0.04,
-    )
-    for col, (ecu_id, gspec) in enumerate(ECU_GAUGES.items(), start=1):
-        label = gspec["name"] + (f" ({gspec['unit']})" if gspec["unit"] else "")
-        fig.add_trace(
-            _gauge_trace(state[ecu_id], label, gspec["vmin"], gspec["vmax"],
-                         gauge_color),
-            row=1, col=col,
-        )
-    fig.add_trace(
-        _gauge_trace(state["bus_rate_hz"], "Bus rate (frames / s)",
-                     0, 5000, gauge_color),
-        row=1, col=4,
-    )
-    fig.update_layout(height=230, margin=dict(l=15, r=15, t=30, b=10))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Boolean ECU status pills.
+    # Static snapshot of the boolean ECU flags, taken at the attack-window
+    # midpoint so the pills show the most informative moment of the capture.
+    snap_t_us = int(spec.pre_s * 1e6) + int(spec.attack_s * 1e6 / 2)
+    snap_t_us = min(snap_t_us, int(df["t_us"].max()))
+    snap = _decode_state(df, wf, snap_t_us)
     pcols = st.columns(4)
+    pill_help = f"Snapshot at t = {snap_t_us/1e6:.1f}s (attack-window midpoint)."
     for j, (ecu_id, fspec) in enumerate(ECU_FLAGS.items()):
-        val = state[ecu_id]
-        if val is None:
-            label = "—"
-        else:
-            label = fspec["on"] if val else fspec["off"]
-        pcols[j].metric(fspec["name"], label)
-    pcols[3].metric("Climate stage",
-                     str(state[ECU_CLIMATE_ID]) if state[ECU_CLIMATE_ID] is not None else "—")
-
-    # Road strip with a vector car whose position tracks the decoded speed.
-    speed = state[0x100] or 0
-    car_x = 7.0 + (min(speed, 200) / 200.0) * 86.0
-    body_color = ACCENT if state["attack_active"] else "#4477aa"
-    window_color = "#fde7e9" if state["attack_active"] else "#bcd8ee"
-
-    road = go.Figure()
-    # Sky / backdrop band
-    road.add_shape(type="rect", x0=0, y0=0.75, x1=100, y1=1.00,
-                    line=dict(width=0), fillcolor="#f6f8fb")
-    # Road body
-    road.add_shape(type="rect", x0=0, y0=0.00, x1=100, y1=0.18,
-                    line=dict(width=0), fillcolor="#2f2f33")
-    # Centre lane markings
-    for i in range(0, 100, 8):
-        road.add_shape(type="rect", x0=i + 1, y0=0.085, x1=i + 5, y1=0.105,
-                        line=dict(width=0), fillcolor="#f4f4f4")
-    # --- Car (built from shapes so it always renders, even without an emoji font) ---
-    # Wheels
-    for wx in (car_x - 3.2, car_x + 3.2):
-        road.add_shape(type="circle",
-                       x0=wx - 1.1, y0=0.17, x1=wx + 1.1, y1=0.36,
-                       line=dict(color="#0f0f0f", width=1.4),
-                       fillcolor="#1a1a1a")
-        road.add_shape(type="circle",
-                       x0=wx - 0.45, y0=0.235, x1=wx + 0.45, y1=0.305,
-                       line=dict(width=0), fillcolor="#8a8a8a")
-    # Body (lower box)
-    road.add_shape(type="rect",
-                   x0=car_x - 6.0, y0=0.27, x1=car_x + 6.0, y1=0.55,
-                   line=dict(color="#0f0f0f", width=1.4),
-                   fillcolor=body_color)
-    # Roof (trapezoid)
-    road.add_shape(type="path",
-                   path=(f"M {car_x - 3.8:.3f} 0.55 "
-                         f"L {car_x + 3.3:.3f} 0.55 "
-                         f"L {car_x + 2.3:.3f} 0.74 "
-                         f"L {car_x - 2.8:.3f} 0.74 Z"),
-                   line=dict(color="#0f0f0f", width=1.4),
-                   fillcolor=body_color)
-    # Window glass (lighter inset)
-    road.add_shape(type="path",
-                   path=(f"M {car_x - 3.3:.3f} 0.555 "
-                         f"L {car_x + 2.8:.3f} 0.555 "
-                         f"L {car_x + 2.0:.3f} 0.715 "
-                         f"L {car_x - 2.5:.3f} 0.715 Z"),
-                   line=dict(width=0), fillcolor=window_color)
-    # Headlight (small yellow dot on the front)
-    road.add_shape(type="circle",
-                   x0=car_x + 5.5, y0=0.34, x1=car_x + 6.3, y1=0.42,
-                   line=dict(width=0), fillcolor="#ffd57a")
-    # Speed label above the car
-    road.add_annotation(
-        text=f"{int(speed)} km/h", x=car_x, y=0.86, xref="x", yref="y",
-        showarrow=False,
-        font=dict(color=PRIMARY, size=13, family="serif"),
+        val = snap[ecu_id]
+        label = "—" if val is None else (fspec["on"] if val else fspec["off"])
+        pcols[j].metric(fspec["name"], label, help=pill_help)
+    pcols[3].metric(
+        "Climate stage",
+        str(snap[ECU_CLIMATE_ID]) if snap[ECU_CLIMATE_ID] is not None else "—",
+        help=pill_help,
     )
-    if state["attack_active"]:
-        road.add_annotation(
-            text="● ATTACK ACTIVE", x=95, y=0.86, xref="x", yref="y",
-            showarrow=False, xanchor="right",
-            font=dict(color=ACCENT, size=12, family="serif"),
-        )
-    road.update_layout(
-        xaxis=dict(range=[0, 100], visible=False, fixedrange=True),
-        yaxis=dict(range=[0, 1], visible=False, fixedrange=True),
-        height=180, margin=dict(l=8, r=8, t=6, b=6),
-        plot_bgcolor="white",
-    )
-    st.plotly_chart(road, use_container_width=True)
 
     st.markdown(
-        "<span class='footer-note'>The gauges read the defender-side (RX) "
-        "view of the bus, decoded from the latest payload on each ID. "
-        "Spoofing 0x100 or 0x110 snaps the speedometer or tachometer to a "
-        "false value; heavy DoS and ID-sweep cause RX loss, which freezes "
-        "the gauges on stale state; replay re-injects past frames, which "
-        "show up as the gauge jumping back in time. Move the slider to "
-        "scrub through the capture.</span>",
+        "<span class='footer-note'>Press <b>Play</b> below the dashboard to "
+        "watch the capture flow in real time, or drag the slider to scrub. "
+        "Gauges decode the defender-side (RX) view of the bus from the "
+        "latest payload on each ID. Spoofing 0x100 or 0x110 snaps the "
+        "speedometer or tachometer to a false value; heavy DoS or "
+        "ID-sweep cause RX loss, which freezes the gauges on stale state; "
+        "replay re-injects past frames, which show up as the gauge "
+        "jumping back in time. Body colour and the ATTACK ACTIVE marker "
+        "turn on whenever the true label is positive in the live window.</span>",
         unsafe_allow_html=True,
     )
 

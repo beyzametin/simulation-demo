@@ -48,6 +48,81 @@ PRIMARY = "#1f4068"
 ACCENT  = "#cc6677"
 GREY    = "#888888"
 
+# --------------------------------------------------------------------------
+# Cockpit decoders — map each tracked ECU to a readable signal.
+# Values mirror BENCH_ECUS in code/utils/sim.py; the simulator emits the
+# nominal payload defined there, and an attacker that touches one of these
+# IDs (spoofing 0x100, replay across the bus, DoS at 0x000, etc.) will
+# show up as a glitch, a freeze, or a wrong value in the gauge it drives.
+# --------------------------------------------------------------------------
+
+def _u8(d, i=0):  return d[i] if len(d) > i else 0
+def _u16(d):      return int.from_bytes(d[:2], "big") if len(d) >= 2 else 0
+
+ECU_GAUGES = {
+    0x100: dict(name="Speed",    unit="km/h", decode=lambda d: _u8(d),
+                 vmin=0, vmax=200),
+    0x110: dict(name="RPM",      unit="",     decode=lambda d: _u16(d),
+                 vmin=0, vmax=8000),
+    0x140: dict(name="Throttle", unit="%",    decode=lambda d: min(100, _u8(d)),
+                 vmin=0, vmax=100),
+}
+
+ECU_FLAGS = {
+    0x120: dict(name="Brake",     on="PRESSED", off="released",
+                decode=lambda d: bool(_u8(d))),
+    0x150: dict(name="Door",      on="open",    off="closed",
+                decode=lambda d: bool(_u8(d))),
+    0x160: dict(name="Headlight", on="on",      off="off",
+                decode=lambda d: bool(_u8(d))),
+}
+
+ECU_CLIMATE_ID = 0x170
+
+
+def _decode_state(df: pd.DataFrame, wf: pd.DataFrame, t_us: int) -> dict:
+    """Latest defender-side (RX) value of each tracked ECU at or before t_us."""
+    rx_up = df[(df["source_role"] == "rx") & (df["t_us"] <= t_us)]
+    state: dict = {}
+    for ecu_id, spec in {**ECU_GAUGES, **ECU_FLAGS}.items():
+        sub = rx_up[rx_up["arbitration_id"] == ecu_id]
+        state[ecu_id] = (spec["decode"](sub.iloc[-1]["data"])
+                         if not sub.empty else None)
+    climate_sub = rx_up[rx_up["arbitration_id"] == ECU_CLIMATE_ID]
+    state[ECU_CLIMATE_ID] = (_u8(climate_sub.iloc[-1]["data"])
+                              if not climate_sub.empty else None)
+
+    # Window-level detector verdict at this timestamp
+    win = wf[(wf["window_start_us"] <= t_us) &
+             (wf["window_end_us"] >= t_us)]
+    state["pred_prob"]   = float(win["pred_prob"].iloc[0]) if not win.empty else None
+    state["true_label"]  = int(win["label"].iloc[0])      if not win.empty else None
+
+    # Is there an injected frame within the last second on the bus?
+    recent = df[(df["t_us"] >= max(0, t_us - 1_000_000)) &
+                (df["t_us"] <= t_us)]
+    state["attack_active"] = bool((recent["label"] == 1).any())
+
+    # Recent bus load (RX frames in past 1 s) for the bus-utilisation gauge.
+    rx_recent = rx_up[rx_up["t_us"] >= max(0, t_us - 1_000_000)]
+    state["bus_rate_hz"] = float(len(rx_recent))
+    return state
+
+
+def _gauge_trace(value, label, vmin, vmax, color):
+    return go.Indicator(
+        mode="gauge+number",
+        value=value if value is not None else 0,
+        title={"text": label, "font": {"size": 12, "color": "#444"}},
+        number={"font": {"size": 22, "color": PRIMARY}},
+        gauge=dict(
+            axis=dict(range=[vmin, vmax], tickfont=dict(size=9)),
+            bar=dict(color=color, thickness=0.5),
+            bgcolor="white", borderwidth=1, bordercolor="#e6e6e6",
+            steps=[dict(range=[vmin, vmax], color="#f6f6f8")],
+        ),
+    )
+
 st.markdown(
     """
     <style>
@@ -227,11 +302,117 @@ st.divider()
 # Visual tabs
 # --------------------------------------------------------------------------
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Traffic timeline", "Detector confidence", "Calibration", "Asymmetry channel",
+tab_cockpit, tab1, tab2, tab3, tab4 = st.tabs([
+    "Cockpit", "Traffic timeline", "Detector confidence",
+    "Calibration", "Asymmetry channel",
 ])
 
 WINDOW_US = 1_000_000
+
+with tab_cockpit:
+    t_max_s = float(df["t_us"].max() / 1e6)
+    default_t = round(min(t_max_s, max(0.0, spec.pre_s + spec.attack_s / 2)), 1)
+    t_sel_s = st.slider(
+        "Scrub through the capture (seconds)",
+        min_value=0.0, max_value=t_max_s,
+        value=default_t, step=0.1,
+        help="Drag to see how the gauges, status lights, and the detector's "
+             "verdict evolve over the bus timeline.",
+    )
+    t_sel_us = int(t_sel_s * 1_000_000)
+    state = _decode_state(df, wf, t_sel_us)
+
+    # Status banner — defender's view of what is happening right now.
+    pred = state["pred_prob"]
+    pred_txt = f"P(attack) = {pred:.3f}" if pred is not None else "P(attack) = n/a"
+    if state["attack_active"]:
+        banner_bg, banner_fg = ACCENT, "white"
+        banner_text = (f"Attack window active "
+                       f"(true label = {state['true_label']}) — "
+                       f"detector reports {pred_txt}")
+    else:
+        banner_bg, banner_fg = PRIMARY, "white"
+        banner_text = f"Benign — detector reports {pred_txt}"
+    st.markdown(
+        f"<div style='background:{banner_bg};color:{banner_fg};"
+        f"padding:0.55rem 1rem;border-radius:8px;font-weight:500;"
+        f"margin-bottom:1rem;'>{banner_text}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Three primary gauges (Speed, RPM, Throttle) plus a bus-utilisation meter.
+    gauge_color = ACCENT if state["attack_active"] else PRIMARY
+    fig = make_subplots(
+        rows=1, cols=4,
+        specs=[[{"type": "indicator"}] * 4],
+        horizontal_spacing=0.04,
+    )
+    for col, (ecu_id, gspec) in enumerate(ECU_GAUGES.items(), start=1):
+        label = gspec["name"] + (f" ({gspec['unit']})" if gspec["unit"] else "")
+        fig.add_trace(
+            _gauge_trace(state[ecu_id], label, gspec["vmin"], gspec["vmax"],
+                         gauge_color),
+            row=1, col=col,
+        )
+    fig.add_trace(
+        _gauge_trace(state["bus_rate_hz"], "Bus rate (frames / s)",
+                     0, 5000, gauge_color),
+        row=1, col=4,
+    )
+    fig.update_layout(height=230, margin=dict(l=15, r=15, t=30, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Boolean ECU status pills.
+    pcols = st.columns(4)
+    for j, (ecu_id, fspec) in enumerate(ECU_FLAGS.items()):
+        val = state[ecu_id]
+        if val is None:
+            label = "—"
+        else:
+            label = fspec["on"] if val else fspec["off"]
+        pcols[j].metric(fspec["name"], label)
+    pcols[3].metric("Climate stage",
+                     str(state[ECU_CLIMATE_ID]) if state[ECU_CLIMATE_ID] is not None else "—")
+
+    # Road strip with a car icon whose position tracks the decoded speed.
+    speed = state[0x100] or 0
+    car_x = 5.0 + (min(speed, 200) / 200.0) * 90.0
+    road = go.Figure()
+    road.add_shape(type="rect", x0=0, y0=0.2, x1=100, y1=0.8,
+                    line=dict(width=0), fillcolor="#3a3a3a")
+    for i in range(0, 100, 8):
+        road.add_shape(type="rect", x0=i, y0=0.47, x1=i + 4, y1=0.53,
+                        line=dict(width=0), fillcolor="#f4f4f4")
+    car_emoji = "🚗"
+    road.add_trace(go.Scatter(
+        x=[car_x], y=[0.5], mode="text",
+        text=[car_emoji], textfont=dict(size=44),
+        showlegend=False, hoverinfo="skip",
+    ))
+    road.update_layout(
+        xaxis=dict(range=[0, 100], visible=False),
+        yaxis=dict(range=[0, 1], visible=False),
+        height=110, margin=dict(l=10, r=10, t=4, b=4),
+        plot_bgcolor="white",
+    )
+    if state["attack_active"]:
+        road.add_annotation(
+            text="ATTACK", x=50, y=0.92, xref="x", yref="y",
+            showarrow=False,
+            font=dict(color=ACCENT, size=14, family="serif"),
+        )
+    st.plotly_chart(road, use_container_width=True)
+
+    st.markdown(
+        "<span class='footer-note'>The gauges read the defender-side (RX) "
+        "view of the bus, decoded from the latest payload on each ID. "
+        "Spoofing 0x100 or 0x110 snaps the speedometer or tachometer to a "
+        "false value; heavy DoS and ID-sweep cause RX loss, which freezes "
+        "the gauges on stale state; replay re-injects past frames, which "
+        "show up as the gauge jumping back in time. Move the slider to "
+        "scrub through the capture.</span>",
+        unsafe_allow_html=True,
+    )
 
 with tab1:
     rx = df[df["source_role"] == "rx"].copy()

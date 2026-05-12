@@ -374,33 +374,75 @@ with tab_cockpit:
     pcols[3].metric("Climate stage",
                      str(state[ECU_CLIMATE_ID]) if state[ECU_CLIMATE_ID] is not None else "—")
 
-    # Road strip with a car icon whose position tracks the decoded speed.
+    # Road strip with a vector car whose position tracks the decoded speed.
     speed = state[0x100] or 0
-    car_x = 5.0 + (min(speed, 200) / 200.0) * 90.0
+    car_x = 7.0 + (min(speed, 200) / 200.0) * 86.0
+    body_color = ACCENT if state["attack_active"] else "#4477aa"
+    window_color = "#fde7e9" if state["attack_active"] else "#bcd8ee"
+
     road = go.Figure()
-    road.add_shape(type="rect", x0=0, y0=0.2, x1=100, y1=0.8,
-                    line=dict(width=0), fillcolor="#3a3a3a")
+    # Sky / backdrop band
+    road.add_shape(type="rect", x0=0, y0=0.75, x1=100, y1=1.00,
+                    line=dict(width=0), fillcolor="#f6f8fb")
+    # Road body
+    road.add_shape(type="rect", x0=0, y0=0.00, x1=100, y1=0.18,
+                    line=dict(width=0), fillcolor="#2f2f33")
+    # Centre lane markings
     for i in range(0, 100, 8):
-        road.add_shape(type="rect", x0=i, y0=0.47, x1=i + 4, y1=0.53,
+        road.add_shape(type="rect", x0=i + 1, y0=0.085, x1=i + 5, y1=0.105,
                         line=dict(width=0), fillcolor="#f4f4f4")
-    car_emoji = "🚗"
-    road.add_trace(go.Scatter(
-        x=[car_x], y=[0.5], mode="text",
-        text=[car_emoji], textfont=dict(size=44),
-        showlegend=False, hoverinfo="skip",
-    ))
-    road.update_layout(
-        xaxis=dict(range=[0, 100], visible=False),
-        yaxis=dict(range=[0, 1], visible=False),
-        height=110, margin=dict(l=10, r=10, t=4, b=4),
-        plot_bgcolor="white",
+    # --- Car (built from shapes so it always renders, even without an emoji font) ---
+    # Wheels
+    for wx in (car_x - 3.2, car_x + 3.2):
+        road.add_shape(type="circle",
+                       x0=wx - 1.1, y0=0.17, x1=wx + 1.1, y1=0.36,
+                       line=dict(color="#0f0f0f", width=1.4),
+                       fillcolor="#1a1a1a")
+        road.add_shape(type="circle",
+                       x0=wx - 0.45, y0=0.235, x1=wx + 0.45, y1=0.305,
+                       line=dict(width=0), fillcolor="#8a8a8a")
+    # Body (lower box)
+    road.add_shape(type="rect",
+                   x0=car_x - 6.0, y0=0.27, x1=car_x + 6.0, y1=0.55,
+                   line=dict(color="#0f0f0f", width=1.4),
+                   fillcolor=body_color)
+    # Roof (trapezoid)
+    road.add_shape(type="path",
+                   path=(f"M {car_x - 3.8:.3f} 0.55 "
+                         f"L {car_x + 3.3:.3f} 0.55 "
+                         f"L {car_x + 2.3:.3f} 0.74 "
+                         f"L {car_x - 2.8:.3f} 0.74 Z"),
+                   line=dict(color="#0f0f0f", width=1.4),
+                   fillcolor=body_color)
+    # Window glass (lighter inset)
+    road.add_shape(type="path",
+                   path=(f"M {car_x - 3.3:.3f} 0.555 "
+                         f"L {car_x + 2.8:.3f} 0.555 "
+                         f"L {car_x + 2.0:.3f} 0.715 "
+                         f"L {car_x - 2.5:.3f} 0.715 Z"),
+                   line=dict(width=0), fillcolor=window_color)
+    # Headlight (small yellow dot on the front)
+    road.add_shape(type="circle",
+                   x0=car_x + 5.5, y0=0.34, x1=car_x + 6.3, y1=0.42,
+                   line=dict(width=0), fillcolor="#ffd57a")
+    # Speed label above the car
+    road.add_annotation(
+        text=f"{int(speed)} km/h", x=car_x, y=0.86, xref="x", yref="y",
+        showarrow=False,
+        font=dict(color=PRIMARY, size=13, family="serif"),
     )
     if state["attack_active"]:
         road.add_annotation(
-            text="ATTACK", x=50, y=0.92, xref="x", yref="y",
-            showarrow=False,
-            font=dict(color=ACCENT, size=14, family="serif"),
+            text="● ATTACK ACTIVE", x=95, y=0.86, xref="x", yref="y",
+            showarrow=False, xanchor="right",
+            font=dict(color=ACCENT, size=12, family="serif"),
         )
+    road.update_layout(
+        xaxis=dict(range=[0, 100], visible=False, fixedrange=True),
+        yaxis=dict(range=[0, 1], visible=False, fixedrange=True),
+        height=180, margin=dict(l=8, r=8, t=6, b=6),
+        plot_bgcolor="white",
+    )
     st.plotly_chart(road, use_container_width=True)
 
     st.markdown(

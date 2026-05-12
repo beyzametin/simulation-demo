@@ -133,113 +133,88 @@ def _gauge_trace(value, label, vmin, vmax, color):
 # --------------------------------------------------------------------------
 
 def _car_x_from_speed(speed_kmh: float) -> float:
-    return 7.0 + (min(max(speed_kmh, 0.0), 200.0) / 200.0) * 86.0
+    return 12.0 + (min(max(speed_kmh, 0.0), 200.0) / 200.0) * 76.0
 
 
-def _sky_shapes() -> list[dict]:
-    """Five-band horizontal gradient — pale cool blues, daytime overcast feel."""
-    bands = [
-        (0.50, 0.58, "#e2e9f1"),
-        (0.58, 0.68, "#d3dde9"),
-        (0.68, 0.80, "#c1cedd"),
-        (0.80, 0.92, "#aebccd"),
-        (0.92, 1.00, "#9aaabf"),
-    ]
-    return [dict(type="rect", xref="x2", yref="y2",
-                 x0=0, y0=lo, x1=100, y1=hi,
-                 line=dict(width=0), fillcolor=color, layer="below")
-            for lo, hi, color in bands]
-
-
-def _distant_hills_shapes(t_us: float) -> list[dict]:
-    """Rolling hills along the horizon, slow parallax."""
-    offset = -(t_us / 1e6 * 3.0) % 40.0
-    shapes = []
-    for k in range(-1, 5):
-        base = k * 40.0 + offset
-        # Far hill (lighter, behind)
-        shapes.append(dict(type="path", xref="x2", yref="y2",
-                           path=(f"M {base - 2:.2f} 0.50 "
-                                 f"Q {base + 8:.2f} 0.44 "
-                                 f"{base + 18:.2f} 0.50 "
-                                 f"Q {base + 28:.2f} 0.46 "
-                                 f"{base + 38:.2f} 0.50 "
-                                 f"L {base + 38:.2f} 0.54 "
-                                 f"L {base - 2:.2f} 0.54 Z"),
-                           line=dict(width=0),
-                           fillcolor="#b3bfcd", layer="below"))
-    # Near hill (darker, in front)
-    near_offset = -(t_us / 1e6 * 4.5) % 35.0
-    for k in range(-1, 5):
-        base = k * 35.0 + near_offset
-        shapes.append(dict(type="path", xref="x2", yref="y2",
-                           path=(f"M {base:.2f} 0.50 "
-                                 f"Q {base + 10:.2f} 0.46 "
-                                 f"{base + 20:.2f} 0.50 "
-                                 f"L {base + 20:.2f} 0.52 "
-                                 f"L {base:.2f} 0.52 Z"),
-                           line=dict(width=0),
-                           fillcolor="#92a2b5", layer="below"))
-    return shapes
-
-
-def _lamp_posts_shapes(t_us: float) -> list[dict]:
-    """Roadside lamp posts; medium-speed parallax — clearest motion cue."""
-    offset = -(t_us / 1e6 * 9.0) % 24.0
-    shapes = []
-    for k in range(-1, 6):
-        base_x = k * 24.0 + offset + 4
-        # Vertical pole
-        shapes.append(dict(type="line", xref="x2", yref="y2",
-                           x0=base_x, y0=0.18, x1=base_x, y1=0.46,
-                           line=dict(color="#3a3e44", width=1.4)))
-        # Lamp arm
-        shapes.append(dict(type="line", xref="x2", yref="y2",
-                           x0=base_x, y0=0.46, x1=base_x + 1.6, y1=0.48,
-                           line=dict(color="#3a3e44", width=1.2)))
-        # Lamp head (soft warm dot)
-        shapes.append(dict(type="circle", xref="x2", yref="y2",
-                           x0=base_x + 1.2, y0=0.455, x1=base_x + 2.1, y1=0.495,
-                           line=dict(color="#3a3e44", width=0.5),
-                           fillcolor="#e8d28e"))
-    return shapes
-
-
-def _road_shapes(t_us: float) -> list[dict]:
-    """Asphalt + side markings + scrolling centre dashes."""
-    shapes = [
-        # Asphalt body (broad)
-        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.00, x1=100, y1=0.18,
-             line=dict(width=0), fillcolor="#2f3236"),
-        # Far-edge highlight (asphalt fades toward the horizon)
-        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.165, x1=100, y1=0.18,
-             line=dict(width=0), fillcolor="#3f444c"),
-        # Foreground darkening (closest to viewer)
-        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.00, x1=100, y1=0.025,
-             line=dict(width=0), fillcolor="#1d1f23"),
-        # Soft yellow side line on the upper edge of the road
-        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.157, x1=100, y1=0.165,
-             line=dict(width=0), fillcolor="#c4a85d"),
-        # Bright white shoulder line on the lower edge
-        dict(type="rect", xref="x2", yref="y2", x0=0, y0=0.020, x1=100, y1=0.028,
-             line=dict(width=0), fillcolor="#e6e6e2"),
-    ]
-    # Centre dashes — fast scroll, the strongest motion cue
-    offset = -(t_us / 1e6 * 14.0) % 7.0
-    for i in range(-1, 18):
-        x0 = i * 7 + offset
-        shapes.append(dict(type="rect", xref="x2", yref="y2",
-                           x0=x0 + 1.5, y0=0.090, x1=x0 + 4.5, y1=0.105,
-                           line=dict(width=0), fillcolor="#f0f0eb"))
-    return shapes
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
 
 
 def _scene_shapes(t_us: float) -> list[dict]:
-    """Compose the full environment: sky -> hills -> lamps -> asphalt + lanes."""
-    return (_sky_shapes()
-            + _distant_hills_shapes(t_us)
-            + _lamp_posts_shapes(t_us)
-            + _road_shapes(t_us))
+    """Compose the bottom-subplot scene: layered sky gradient + a clean
+    horizon ridge + a road. Shapes use xref='x'/yref='y' because in this
+    figure the scatter subplot is the only cartesian axis pair."""
+    sh: list[dict] = []
+    # Sky gradient — four pale cool-grey bands, painted-light feel.
+    sky_bands = [
+        (0.45, 0.55, "#eaf0f7"),
+        (0.55, 0.70, "#d8e1ec"),
+        (0.70, 0.85, "#c5d2e1"),
+        (0.85, 1.00, "#aebccd"),
+    ]
+    for lo, hi, color in sky_bands:
+        sh.append(dict(type="rect", xref="x", yref="y",
+                       x0=0, y0=lo, x1=100, y1=hi,
+                       line=dict(width=0), fillcolor=color))
+
+    # Distant ridge — a single subtle low silhouette along the horizon.
+    ridge_offset = -(t_us / 1e6 * 2.8) % 40.0
+    for k in range(-1, 4):
+        base = k * 40.0 + ridge_offset
+        if base > 100 or base + 40 < 0:
+            continue
+        sh.append(dict(type="path", xref="x", yref="y",
+                       path=(f"M {base:.2f} 0.45 "
+                             f"C {base + 8:.2f} 0.43 {base + 16:.2f} 0.40 "
+                             f"{base + 22:.2f} 0.43 "
+                             f"C {base + 30:.2f} 0.46 {base + 36:.2f} 0.43 "
+                             f"{base + 42:.2f} 0.45 "
+                             f"L {base + 42:.2f} 0.46 L {base:.2f} 0.46 Z"),
+                       line=dict(width=0),
+                       fillcolor="#9aa9bc"))
+
+    # Horizon strip — thin haze line between the sky and the ground.
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=0, y0=0.44, x1=100, y1=0.46,
+                   line=dict(width=0), fillcolor="#b9c3d0"))
+
+    # Ground band — narrow grass strip above the road for separation.
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=0, y0=0.32, x1=100, y1=0.45,
+                   line=dict(width=0), fillcolor="#cbc9b5"))
+
+    # Asphalt — three subtle horizontal bands for a graduated perspective.
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=0, y0=0.10, x1=100, y1=0.32,
+                   line=dict(width=0), fillcolor="#34373d"))
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=0, y0=0.27, x1=100, y1=0.32,
+                   line=dict(width=0), fillcolor="#42464e"))
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=0, y0=0.10, x1=100, y1=0.14,
+                   line=dict(width=0), fillcolor="#26282c"))
+
+    # Side stripes — solid white at top, solid white at bottom edge of the road.
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=0, y0=0.305, x1=100, y1=0.320,
+                   line=dict(width=0), fillcolor="#eeece6"))
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=0, y0=0.115, x1=100, y1=0.130,
+                   line=dict(width=0), fillcolor="#eeece6"))
+
+    # Centre dashes — strong, fast-scrolling cue.
+    dash_offset = -(t_us / 1e6 * 14.0) % 8.0
+    for i in range(-1, 16):
+        x0 = i * 8 + dash_offset
+        if x0 + 4 < 0 or x0 > 100:
+            continue
+        sh.append(dict(type="rect", xref="x", yref="y",
+                       x0=_clamp(x0 + 1, 0, 100),
+                       y0=0.207,
+                       x1=_clamp(x0 + 4, 0, 100),
+                       y1=0.222,
+                       line=dict(width=0), fillcolor="#eeece6"))
+    return sh
 
 
 # Car palette tuned for a paper-figure aesthetic: monochrome silhouette,
@@ -255,173 +230,194 @@ _CAR_TAILLIGHT    = "#c95a5a"
 
 
 def _car_silhouette_path(cx: float) -> str:
-    """Modern sedan side view centred at cx; spans x in [cx-7, cx+7]."""
+    """Modern coupe-sedan side profile centred at cx, spans x in [cx-9.5, cx+9.5].
+
+    Proportions follow a contemporary fastback sedan: long sloping hood,
+    steep windshield, low rear-roof line, short rear deck, soft bumper curves.
+    Base sits at y=0.225 (the chassis line, partially hidden by wheels)."""
     return (
-        f"M {cx-7.0:.3f} 0.18 "
-        f"L {cx-7.0:.3f} 0.22 "
-        f"C {cx-7.0:.3f} 0.29 {cx-6.5:.3f} 0.30 {cx-5.6:.3f} 0.30 "  # front curve over hood
-        f"L {cx-3.3:.3f} 0.30 "                                       # hood line
-        f"C {cx-2.7:.3f} 0.30 {cx-2.3:.3f} 0.34 {cx-1.5:.3f} 0.41 "   # windshield rake
-        f"L {cx+1.4:.3f} 0.41 "                                       # roof
-        f"C {cx+2.2:.3f} 0.41 {cx+2.6:.3f} 0.36 {cx+3.4:.3f} 0.30 "   # rear-window rake
-        f"L {cx+5.5:.3f} 0.30 "                                       # trunk
-        f"C {cx+6.6:.3f} 0.30 {cx+7.0:.3f} 0.29 {cx+7.0:.3f} 0.22 "   # rear curve
-        f"L {cx+7.0:.3f} 0.18 "
+        f"M {cx-9.5:.3f} 0.225 "
+        f"L {cx-9.5:.3f} 0.275 "
+        f"C {cx-9.5:.3f} 0.305 {cx-8.6:.3f} 0.318 {cx-7.4:.3f} 0.318 "
+        f"L {cx-4.6:.3f} 0.326 "
+        f"C {cx-4.0:.3f} 0.326 {cx-3.5:.3f} 0.355 {cx-2.4:.3f} 0.420 "
+        f"L {cx+1.7:.3f} 0.430 "
+        f"C {cx+2.8:.3f} 0.430 {cx+3.6:.3f} 0.395 {cx+4.5:.3f} 0.336 "
+        f"L {cx+7.8:.3f} 0.326 "
+        f"C {cx+8.9:.3f} 0.326 {cx+9.5:.3f} 0.305 {cx+9.5:.3f} 0.275 "
+        f"L {cx+9.5:.3f} 0.225 "
         f"Z"
     )
 
 
 def _car_window_path(cx: float) -> str:
-    """Window glass — single trapezoid inside the roof outline."""
+    """Greenhouse glass — single trapezoid traced just inside the roof outline."""
     return (
-        f"M {cx-2.7:.3f} 0.305 "
-        f"L {cx-1.5:.3f} 0.398 "
-        f"L {cx+1.3:.3f} 0.398 "
-        f"L {cx+2.7:.3f} 0.305 "
+        f"M {cx-3.6:.3f} 0.330 "
+        f"L {cx-2.4:.3f} 0.418 "
+        f"L {cx+1.6:.3f} 0.422 "
+        f"L {cx+4.0:.3f} 0.336 "
         f"Z"
     )
 
 
-def _wheel_shapes(wx: float) -> list[dict]:
-    """Detailed wheel: tire + rim + hub + four spokes; sits at y centre ~0.162."""
-    cy = 0.162
-    rx, ry = 1.0, 0.05      # outer tire half-extents
-    rim_rx, rim_ry = 0.78, 0.038
-    hub_rx, hub_ry = 0.28, 0.015
+def _wheel_shapes(wx: float, cy: float) -> list[dict]:
+    """Wheel built as concentric ellipses (Plotly axes are wide so x-radius
+    must be larger than y-radius to look round). Sits centred at (wx, cy)."""
+    rx, ry = 1.05, 0.043           # outer tire
+    rim_rx, rim_ry = 0.78, 0.032
+    hub_rx, hub_ry = 0.28, 0.012
     sh = [
-        # Outer tire
-        dict(type="circle", xref="x2", yref="y2",
+        # Outer tire (matte black)
+        dict(type="circle", xref="x", yref="y",
              x0=wx - rx, y0=cy - ry, x1=wx + rx, y1=cy + ry,
-             line=dict(color="#0a0b0d", width=1.0),
-             fillcolor=_CAR_WHEEL_FILL),
-        # Rim (lighter inner ring)
-        dict(type="circle", xref="x2", yref="y2",
+             line=dict(color="#0a0b0d", width=1.0), fillcolor=_CAR_WHEEL_FILL),
+        # Rim (dark grey)
+        dict(type="circle", xref="x", yref="y",
              x0=wx - rim_rx, y0=cy - rim_ry, x1=wx + rim_rx, y1=cy + rim_ry,
-             line=dict(color="#0a0b0d", width=0.4),
-             fillcolor="#2b2e34"),
+             line=dict(color="#161820", width=0.5), fillcolor="#2c3038"),
     ]
-    # Four spokes — drawn as thin lines from hub outward
-    spoke_color = "#7e848e"
-    for ang_deg in (45, 135, 225, 315):
+    # Five thin spokes
+    for ang_deg in (54, 126, 198, 270, 342):
         ang = ang_deg * 3.141592653589793 / 180.0
-        dx = rim_rx * 0.95 * np.cos(ang)
-        dy = rim_ry * 0.95 * np.sin(ang)
-        sh.append(dict(type="line", xref="x2", yref="y2",
+        dx = rim_rx * 0.94 * np.cos(ang)
+        dy = rim_ry * 0.94 * np.sin(ang)
+        sh.append(dict(type="line", xref="x", yref="y",
                        x0=wx, y0=cy, x1=wx + dx, y1=cy + dy,
-                       line=dict(color=spoke_color, width=0.7)))
-    sh.extend([
-        # Hub centre
-        dict(type="circle", xref="x2", yref="y2",
-             x0=wx - hub_rx, y0=cy - hub_ry, x1=wx + hub_rx, y1=cy + hub_ry,
-             line=dict(width=0), fillcolor=_CAR_HUB_FILL),
-        dict(type="circle", xref="x2", yref="y2",
-             x0=wx - 0.10, y0=cy - 0.006, x1=wx + 0.10, y1=cy + 0.006,
-             line=dict(width=0), fillcolor="#15171a"),
-    ])
+                       line=dict(color="#7e848e", width=0.6)))
+    sh.append(dict(type="circle", xref="x", yref="y",
+                   x0=wx - hub_rx, y0=cy - hub_ry,
+                   x1=wx + hub_rx, y1=cy + hub_ry,
+                   line=dict(width=0), fillcolor=_CAR_HUB_FILL))
     return sh
 
 
 def _car_shapes(state: dict) -> list[dict]:
+    """Detailed sedan silhouette sitting on the road. Wheels touch road top
+    at y=0.20; body extends up to a roof at y≈0.43."""
     cx = _car_x_from_speed(state[0x100] or 0.0)
     attack = state["attack_active"]
     border_color = ACCENT if attack else _CAR_BODY_LINE
-    border_width = 2.0 if attack else 1.2
+    border_width = 1.8 if attack else 1.0
 
+    wheel_cy = 0.235       # wheel centre; bottom at 0.20 sits on road top
     sh: list[dict] = []
-    # Ground shadow underneath the car
-    sh.append(dict(type="circle", xref="x2", yref="y2",
-                   x0=cx - 6.8, y0=0.116, x1=cx + 6.8, y1=0.135,
-                   line=dict(width=0), fillcolor="rgba(0,0,0,0.22)"))
-    # Soft attack halo behind the car
+
+    # Drop shadow on the road (flat ellipse beneath the car)
+    sh.append(dict(type="circle", xref="x", yref="y",
+                   x0=cx - 9.0, y0=0.198, x1=cx + 9.0, y1=0.215,
+                   line=dict(width=0), fillcolor="rgba(0,0,0,0.28)"))
+
+    # Attack halo
     if attack:
-        sh.append(dict(type="rect", xref="x2", yref="y2",
-                       x0=cx - 8.4, y0=0.10, x1=cx + 8.4, y1=0.50,
-                       line=dict(color=ACCENT, width=1.0, dash="dot"),
-                       fillcolor="rgba(204,102,119,0.06)"))
-    # Body silhouette (smooth sedan profile)
-    sh.append(dict(type="path", xref="x2", yref="y2",
+        sh.append(dict(type="rect", xref="x", yref="y",
+                       x0=cx - 11.0, y0=0.19, x1=cx + 11.0, y1=0.47,
+                       line=dict(color=ACCENT, width=0.9, dash="dot"),
+                       fillcolor="rgba(204,102,119,0.05)"))
+
+    # Lower body / chassis (between wheels)
+    sh.append(dict(type="path", xref="x", yref="y",
                    path=_car_silhouette_path(cx),
                    line=dict(color=border_color, width=border_width),
                    fillcolor=_CAR_BODY_FILL))
-    # Light reflection band along the upper hood / roof (subtle highlight)
-    sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 5.0:.3f} 0.295 "
-                         f"L {cx - 3.5:.3f} 0.295 "
-                         f"L {cx - 1.8:.3f} 0.405 "
-                         f"L {cx + 1.2:.3f} 0.405 "
-                         f"L {cx + 2.5:.3f} 0.350 "
-                         f"L {cx + 5.0:.3f} 0.295 Z"),
-                   line=dict(width=0), fillcolor="rgba(255,255,255,0.12)"))
-    # Beltline accent — under the windows
-    sh.append(dict(type="line", xref="x2", yref="y2",
-                   x0=cx - 5.8, y0=0.302, x1=cx + 5.6, y1=0.302,
-                   line=dict(color="#7d8590", width=0.9)))
-    # Lower body character line — runs above the wheel arches
-    sh.append(dict(type="line", xref="x2", yref="y2",
-                   x0=cx - 5.7, y0=0.225, x1=cx + 5.7, y1=0.225,
-                   line=dict(color="#9aa3ae", width=0.6)))
-    # Window glass
-    sh.append(dict(type="path", xref="x2", yref="y2",
+
+    # Body highlight band — long horizontal sheen on the upper surface
+    sh.append(dict(type="path", xref="x", yref="y",
+                   path=(f"M {cx-7.0:.3f} 0.317 "
+                         f"L {cx-4.5:.3f} 0.327 "
+                         f"L {cx-2.4:.3f} 0.418 "
+                         f"L {cx+1.8:.3f} 0.428 "
+                         f"L {cx+4.4:.3f} 0.336 "
+                         f"L {cx+7.5:.3f} 0.325 "
+                         f"L {cx+7.5:.3f} 0.320 "
+                         f"L {cx+4.0:.3f} 0.330 "
+                         f"L {cx+1.5:.3f} 0.422 "
+                         f"L {cx-2.2:.3f} 0.412 "
+                         f"L {cx-4.5:.3f} 0.322 "
+                         f"L {cx-7.0:.3f} 0.313 Z"),
+                   line=dict(width=0), fillcolor="rgba(255,255,255,0.18)"))
+
+    # Window glass (greenhouse)
+    sh.append(dict(type="path", xref="x", yref="y",
                    path=_car_window_path(cx),
-                   line=dict(color=_CAR_WINDOW_LINE, width=0.7),
+                   line=dict(color=_CAR_WINDOW_LINE, width=0.6),
                    fillcolor=_CAR_WINDOW_FILL))
-    # Window upper highlight (cool reflection)
-    sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 2.0:.3f} 0.385 "
-                         f"L {cx + 1.0:.3f} 0.385 "
-                         f"L {cx + 0.6:.3f} 0.395 "
-                         f"L {cx - 1.7:.3f} 0.395 Z"),
-                   line=dict(width=0), fillcolor="rgba(255,255,255,0.30)"))
-    # B-pillar divider
-    sh.append(dict(type="line", xref="x2", yref="y2",
-                   x0=cx - 0.05, y0=0.310, x1=cx - 0.05, y1=0.395,
-                   line=dict(color=_CAR_WINDOW_LINE, width=1.0)))
-    # Front-door cut line
-    sh.append(dict(type="line", xref="x2", yref="y2",
-                   x0=cx - 0.1, y0=0.30, x1=cx - 0.1, y1=0.18,
-                   line=dict(color="#7d8590", width=0.5)))
-    # Door handle
-    sh.append(dict(type="rect", xref="x2", yref="y2",
-                   x0=cx - 1.6, y0=0.270, x1=cx - 0.7, y1=0.282,
-                   line=dict(width=0), fillcolor="#5e656e"))
-    sh.append(dict(type="rect", xref="x2", yref="y2",
-                   x0=cx + 0.7, y0=0.270, x1=cx + 1.6, y1=0.282,
-                   line=dict(width=0), fillcolor="#5e656e"))
-    # Side mirror — small fin near the A-pillar
-    sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 2.6:.3f} 0.316 "
-                         f"L {cx - 2.1:.3f} 0.316 "
-                         f"L {cx - 2.0:.3f} 0.336 "
-                         f"L {cx - 2.55:.3f} 0.336 Z"),
+    # Reflection along the top of the glass
+    sh.append(dict(type="path", xref="x", yref="y",
+                   path=(f"M {cx-3.0:.3f} 0.405 "
+                         f"L {cx-2.5:.3f} 0.418 "
+                         f"L {cx+1.4:.3f} 0.422 "
+                         f"L {cx+2.0:.3f} 0.410 "
+                         f"Z"),
+                   line=dict(width=0), fillcolor="rgba(255,255,255,0.32)"))
+    # B-pillar
+    sh.append(dict(type="line", xref="x", yref="y",
+                   x0=cx + 0.0, y0=0.330, x1=cx + 0.0, y1=0.420,
+                   line=dict(color=_CAR_WINDOW_LINE, width=1.2)))
+    # Beltline (under windows, runs full body length)
+    sh.append(dict(type="line", xref="x", yref="y",
+                   x0=cx - 7.5, y0=0.327, x1=cx + 7.4, y1=0.327,
+                   line=dict(color="#7d8590", width=0.7)))
+    # Lower character line — gives the body visual weight
+    sh.append(dict(type="line", xref="x", yref="y",
+                   x0=cx - 7.5, y0=0.265, x1=cx + 7.5, y1=0.265,
+                   line=dict(color="#a0a8b2", width=0.5)))
+
+    # Door cut lines
+    for dx_split in (-0.2, ):
+        sh.append(dict(type="line", xref="x", yref="y",
+                       x0=cx + dx_split, y0=0.328, x1=cx + dx_split, y1=0.232,
+                       line=dict(color="#8b919b", width=0.5)))
+
+    # Door handles
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=cx - 2.4, y0=0.305, x1=cx - 1.0, y1=0.316,
+                   line=dict(width=0), fillcolor="#6b727c"))
+    sh.append(dict(type="rect", xref="x", yref="y",
+                   x0=cx + 1.0, y0=0.305, x1=cx + 2.4, y1=0.316,
+                   line=dict(width=0), fillcolor="#6b727c"))
+
+    # Side mirror
+    sh.append(dict(type="path", xref="x", yref="y",
+                   path=(f"M {cx-3.8:.3f} 0.343 "
+                         f"L {cx-3.1:.3f} 0.343 "
+                         f"L {cx-3.0:.3f} 0.360 "
+                         f"L {cx-3.75:.3f} 0.360 Z"),
                    line=dict(color=_CAR_BODY_LINE, width=0.5),
-                   fillcolor="#9099a4"))
-    # Front wheel arch (slight darkening)
-    for wx in (cx - 4.0, cx + 4.0):
-        sh.append(dict(type="path", xref="x2", yref="y2",
-                       path=(f"M {wx - 1.15:.3f} 0.180 "
-                             f"Q {wx:.3f} 0.245 "
-                             f"{wx + 1.15:.3f} 0.180 Z"),
-                       line=dict(width=0),
-                       fillcolor="rgba(20,22,26,0.30)"))
-    # Wheels with spokes
-    for wx in (cx - 4.0, cx + 4.0):
-        sh.extend(_wheel_shapes(wx))
-    # Headlight (front) — refined cluster
-    sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx + 6.1:.3f} 0.232 "
-                         f"L {cx + 6.9:.3f} 0.232 "
-                         f"L {cx + 6.95:.3f} 0.262 "
-                         f"L {cx + 6.2:.3f} 0.262 Z"),
-                   line=dict(color="#aa9050", width=0.4),
+                   fillcolor="#8d96a3"))
+
+    # Wheel arches — darker semi-ellipses inside the body, above each wheel
+    for wx in (cx - 5.6, cx + 5.6):
+        sh.append(dict(type="path", xref="x", yref="y",
+                       path=(f"M {wx-1.25:.3f} 0.235 "
+                             f"Q {wx:.3f} 0.292 "
+                             f"{wx+1.25:.3f} 0.235 Z"),
+                       line=dict(width=0), fillcolor="rgba(18,20,24,0.30)"))
+
+    # Wheels
+    for wx in (cx - 5.6, cx + 5.6):
+        sh.extend(_wheel_shapes(wx, wheel_cy))
+
+    # Headlight cluster (sleek slanted slot at the front of the hood)
+    sh.append(dict(type="path", xref="x", yref="y",
+                   path=(f"M {cx+7.4:.3f} 0.305 "
+                         f"L {cx+9.2:.3f} 0.300 "
+                         f"L {cx+9.2:.3f} 0.315 "
+                         f"L {cx+7.6:.3f} 0.320 Z"),
+                   line=dict(color="#8c7842", width=0.5),
                    fillcolor=_CAR_HEADLIGHT))
-    # Taillight (rear)
-    sh.append(dict(type="path", xref="x2", yref="y2",
-                   path=(f"M {cx - 6.95:.3f} 0.232 "
-                         f"L {cx - 6.1:.3f} 0.232 "
-                         f"L {cx - 6.2:.3f} 0.262 "
-                         f"L {cx - 6.9:.3f} 0.262 Z"),
-                   line=dict(color="#80383e", width=0.4),
+    # Taillight (slim, behind the rear quarter)
+    sh.append(dict(type="path", xref="x", yref="y",
+                   path=(f"M {cx-9.2:.3f} 0.300 "
+                         f"L {cx-7.4:.3f} 0.305 "
+                         f"L {cx-7.6:.3f} 0.320 "
+                         f"L {cx-9.2:.3f} 0.315 Z"),
+                   line=dict(color="#7a3038", width=0.5),
                    fillcolor=_CAR_TAILLIGHT))
+    # Front grille hint (thin dark line under the headlight)
+    sh.append(dict(type="line", xref="x", yref="y",
+                   x0=cx + 8.4, y0=0.280, x1=cx + 9.4, y1=0.275,
+                   line=dict(color="#3c4148", width=0.8)))
     return sh
 
 
@@ -438,38 +434,38 @@ def _attack_overlay(state: dict, attack_type: str) -> tuple[list[dict], list[dic
         for i in range(7):
             ax = cx - 7 + i * 2.2
             ay_top = 0.62 + ((i % 2) * 0.06)
-            shapes.append(dict(type="path", xref="x2", yref="y2",
+            shapes.append(dict(type="path", xref="x", yref="y",
                                path=(f"M {ax-0.45:.3f} {ay_top+0.08:.3f} "
                                      f"L {ax+0.45:.3f} {ay_top+0.08:.3f} "
                                      f"L {ax:.3f} {ay_top:.3f} Z"),
                                line=dict(width=0), fillcolor=ACCENT))
         anns.append(dict(text="DoS — flood at 0x000, RX buffer overrun",
-                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          x=cx, y=0.82, xref="x", yref="y", showarrow=False,
                           xanchor="center",
                           font=dict(color=ACCENT, size=11, family="serif")))
 
     elif attack_type == "replay":
         # Faded ghost silhouette behind the car: re-injected past frames.
         ghost_cx = max(8.0, cx - 12.0)
-        shapes.append(dict(type="path", xref="x2", yref="y2",
+        shapes.append(dict(type="path", xref="x", yref="y",
                            path=_car_silhouette_path(ghost_cx),
                            line=dict(color=ACCENT, width=0.8, dash="dot"),
                            fillcolor="rgba(204,102,119,0.10)"))
         # Curved arrow from ghost to live car
-        shapes.append(dict(type="path", xref="x2", yref="y2",
+        shapes.append(dict(type="path", xref="x", yref="y",
                            path=(f"M {ghost_cx+1.0:.3f} 0.45 "
                                  f"Q {(ghost_cx+cx)/2:.3f} 0.55 "
                                  f"{cx-1.5:.3f} 0.45"),
                            line=dict(color=ACCENT, width=1.2),
                            fillcolor="rgba(0,0,0,0)"))
         anns.append(dict(text="Replay — past frames re-injected onto the bus",
-                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          x=cx, y=0.82, xref="x", yref="y", showarrow=False,
                           xanchor="center",
                           font=dict(color=ACCENT, size=11, family="serif")))
 
     elif attack_type == "spoofing":
         # Lightning glyph above the car: false payload on a legitimate ID.
-        shapes.append(dict(type="path", xref="x2", yref="y2",
+        shapes.append(dict(type="path", xref="x", yref="y",
                            path=(f"M {cx-0.6:.3f} 0.72 "
                                  f"L {cx+0.3:.3f} 0.60 "
                                  f"L {cx-0.1:.3f} 0.58 "
@@ -479,7 +475,7 @@ def _attack_overlay(state: dict, attack_type: str) -> tuple[list[dict], list[dic
                            line=dict(color=ACCENT, width=0.8),
                            fillcolor=ACCENT))
         anns.append(dict(text="Spoofing — false payload on a legitimate ID",
-                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          x=cx, y=0.82, xref="x", yref="y", showarrow=False,
                           xanchor="center",
                           font=dict(color=ACCENT, size=11, family="serif")))
 
@@ -487,11 +483,11 @@ def _attack_overlay(state: dict, attack_type: str) -> tuple[list[dict], list[dic
         # Scan bar across the top: enumeration of CAN IDs.
         for i in range(12):
             ax = 6 + i * 7.5
-            shapes.append(dict(type="rect", xref="x2", yref="y2",
+            shapes.append(dict(type="rect", xref="x", yref="y",
                                x0=ax, y0=0.66, x1=ax + 4, y1=0.69,
                                line=dict(width=0), fillcolor=ACCENT))
         anns.append(dict(text="ID-sweep — attacker enumerates CAN IDs",
-                          x=cx, y=0.82, xref="x2", yref="y2", showarrow=False,
+                          x=cx, y=0.82, xref="x", yref="y", showarrow=False,
                           xanchor="center",
                           font=dict(color=ACCENT, size=11, family="serif")))
 
@@ -504,21 +500,21 @@ def _cockpit_annotations(state: dict, t_s: float) -> list[dict]:
     anns: list[dict] = []
     # Small speed label tucked above the car silhouette.
     anns.append(dict(text=f"{int(speed)} km/h", x=cx, y=0.46,
-                     xref="x2", yref="y2", showarrow=False,
+                     xref="x", yref="y", showarrow=False,
                      font=dict(color=PRIMARY, size=12, family="serif")))
     # Status strip across the top of the road subplot.
     anns.append(dict(text=f"t = {t_s:.1f} s", x=2, y=0.93,
-                     xref="x2", yref="y2", showarrow=False, xanchor="left",
+                     xref="x", yref="y", showarrow=False, xanchor="left",
                      font=dict(color="#555", size=11, family="serif")))
     pred = state.get("pred_prob")
     if pred is not None:
         anns.append(dict(text=f"detector P(attack) = {pred:.3f}",
-                         x=50, y=0.93, xref="x2", yref="y2", showarrow=False,
+                         x=50, y=0.93, xref="x", yref="y", showarrow=False,
                          xanchor="center",
                          font=dict(color="#555", size=11, family="serif")))
     if state["attack_active"]:
         anns.append(dict(text="● ATTACK ACTIVE", x=98, y=0.93,
-                         xref="x2", yref="y2", showarrow=False, xanchor="right",
+                         xref="x", yref="y", showarrow=False, xanchor="right",
                          font=dict(color=ACCENT, size=11, family="serif")))
     return anns
 
@@ -529,7 +525,7 @@ def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame,
     `attack_type` drives the attack-specific overlay (DoS triangles, replay ghost, etc.).
     """
     t_max_us = int(df["t_us"].max())
-    step_us = 300_000        # 0.3 s sampling -> ~100 frames for a 30 s capture
+    step_us = 500_000        # 0.5 s sampling -> ~60 frames for a 30 s capture
     samples_us = list(range(0, t_max_us + 1, step_us))
     if samples_us[-1] != t_max_us:
         samples_us.append(t_max_us)
@@ -578,6 +574,8 @@ def _build_cockpit_fig(df: pd.DataFrame, wf: pd.DataFrame,
             layout=dict(
                 shapes=_scene_shapes(t_us) + ov_shapes + _car_shapes(state),
                 annotations=(_cockpit_annotations(state, t_us / 1e6) + ov_anns),
+                xaxis=dict(range=[0, 100], visible=False, fixedrange=True),
+                yaxis=dict(range=[0, 1], visible=False, fixedrange=True),
             ),
             name=f"{t_us / 1e6:.1f}",
         ))
